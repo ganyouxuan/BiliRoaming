@@ -56,7 +56,7 @@ class XposedInit : IXposedHookLoadPackage, IXposedHookZygoteInit {
                     Log.d("Bilibili version: ${getPackageVersion(lpparam.packageName)} (${if (is64) "64" else "32"}bit)")
                     Log.d("SDK: ${Build.VERSION.RELEASE}(${Build.VERSION.SDK_INT}); Phone: ${Build.BRAND} ${Build.MODEL}")
                     Log.d("Config: ${sPrefs.all}")
-                    Log.toast(
+                    Log.d(
                         "哔哩漫游已激活${
                             if (sPrefs.getBoolean("main_func", false) &&
                                 (!sPrefs.getString("hk_server", null).isNullOrEmpty() ||
