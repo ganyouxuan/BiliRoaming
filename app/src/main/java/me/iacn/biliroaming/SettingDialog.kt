@@ -7,9 +7,12 @@ import android.app.Activity
 import android.app.Activity.RESULT_CANCELED
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
@@ -32,6 +35,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.*
 import android.widget.SeekBar.OnSeekBarChangeListener
+import android.widget.Toast
 import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.*
 import me.iacn.biliroaming.BiliBiliPackage.Companion.instance
@@ -104,6 +108,7 @@ class SettingDialog(context: Context) : AlertDialog.Builder(context) {
             findPreference("customize_dynamic")?.onPreferenceClickListener = this
             findPreference("filter_search")?.onPreferenceClickListener = this
             findPreference("filter_comment")?.onPreferenceClickListener = this
+            findPreference("copy_access_key")?.onPreferenceClickListener = this
             checkCompatibleVersion()
             searchItems = retrieve(preferenceScreen)
             checkUpdate()
@@ -242,7 +247,9 @@ class SettingDialog(context: Context) : AlertDialog.Builder(context) {
 
         private fun checkCompatibleVersion() {
             val versionCode = getVersionCode(packageName)
-            var supportMusicNotificationHook = true
+            var supportMusicNotificationHook = versionCode >= 7500300 &&
+                    // from bilibili
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Build.MANUFACTURER.lowercase().equals("huawei")
             var supportCustomizeTab = true
             val supportFullSplash = try {
                 instance.splashInfoClass?.getMethod("getMode") != null
@@ -262,8 +269,6 @@ class SettingDialog(context: Context) : AlertDialog.Builder(context) {
                     supportAddTag = false
                 }
             }
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O)
-                supportMusicNotificationHook = false
             val supportSplashHook = instance.brandSplashClass != null
             val supportTeenagersMode = instance.teenagersModeDialogActivityClass != null
             val supportStoryVideo = instance.storyVideoActivityClass != null
@@ -279,10 +284,13 @@ class SettingDialog(context: Context) : AlertDialog.Builder(context) {
                 disablePreference("full_splash")
             }
             if (!supportMusicNotificationHook) {
-                disablePreference(
-                    "music_notification",
-                    context.getString(R.string.os_not_support)
-                )
+                if (versionCode >= 7500300) {
+                    disablePreference(
+                            "music_notification",
+                            context.getString(R.string.os_not_support))
+                } else {
+                    disablePreference("music_notification")
+                }
             }
             if (!supportMain) {
                 disablePreference("main_func", "Android O以下系统不支持64位Xpatch版，请使用32位版")
@@ -303,6 +311,7 @@ class SettingDialog(context: Context) : AlertDialog.Builder(context) {
             }
             if (!supportPurifyShare) {
                 disablePreference("purify_share")
+                disablePreference("mini_program")
             }
             if (!supportDownloadThread) {
                 disablePreference("custom_download_thread")
@@ -842,6 +851,16 @@ class SettingDialog(context: Context) : AlertDialog.Builder(context) {
             }.show()
             return true
         }
+
+        private fun onCopyAccessKeyClick(): Boolean {
+            val manager = context.getSystemService(ClipboardManager::class.java)
+
+            manager.setPrimaryClip(ClipData.newPlainText("access_key", instance.accessKey))
+            Toast.makeText(context, R.string.copy_access_key_toast, Toast.LENGTH_SHORT).show()
+
+            return true
+        }
+
         @Deprecated("Deprecated in Java")
         override fun onPreferenceClick(preference: Preference) = when (preference.key) {
             "version" -> onVersionClick()
@@ -862,6 +881,7 @@ class SettingDialog(context: Context) : AlertDialog.Builder(context) {
             "default_speed" -> onDefaultSpeedClick()
             "filter_search" -> onFilterSearchClick()
             "filter_comment" -> onFilterCommentClick()
+            "copy_access_key" -> onCopyAccessKeyClick()
             else -> false
         }
     }
@@ -1056,7 +1076,16 @@ class SettingDialog(context: Context) : AlertDialog.Builder(context) {
         }
 
         fun show(context: Context) {
-            SettingDialog(context).show()
+            try {
+                SettingDialog(context).show()
+            } catch (e: Resources.NotFoundException) {
+                AlertDialog.Builder(context)
+                    .setTitle("需要重启")
+                    .setMessage("哔哩漫游更新了")
+                    .setPositiveButton("重启") { _, _ ->
+                        restartApplication(context as Activity)
+                    }.show()
+            }
         }
 
         const val SPLASH_SELECTION = 0
