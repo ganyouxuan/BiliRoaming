@@ -34,8 +34,13 @@ cmaker {
     default {
         targets("biliroaming")
         abiFilters("armeabi-v7a", "arm64-v8a", "x86")
-        arguments += "-DANDROID_STL=none"
-        cppFlags += "-Wno-c++2b-extensions"
+        arguments += arrayOf(
+            "-DANDROID_STL=none",
+            "-DCMAKE_CXX_STANDARD=23",
+            "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
+        )
+        cFlags += "-flto"
+        cppFlags += "-flto"
     }
 
     buildTypes {
@@ -45,9 +50,9 @@ cmaker {
 
 android {
     namespace = "me.iacn.biliroaming"
-    compileSdk = 34
-    buildToolsVersion = "34.0.0"
-    ndkVersion = "27.0.11718014-beta1"
+    compileSdk = 35
+    buildToolsVersion = "35.0.0"
+    ndkVersion = "27.0.12077973"
 
     buildFeatures {
         prefab = true
@@ -57,7 +62,7 @@ android {
     defaultConfig {
         applicationId = "me.iacn.biliroaming"
         minSdk = 24
-        targetSdk = 34  // Target Android U
+        targetSdk = 35  // Target Android U
         versionCode = appVerCode
         versionName = appVerName
     }
