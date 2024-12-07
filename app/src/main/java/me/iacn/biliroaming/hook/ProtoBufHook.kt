@@ -43,6 +43,7 @@ class ProtoBufHook(classLoader: ClassLoader) : BaseHook(classLoader) {
         val searchFilterUpNames = run {
             sPrefs.getStringSet("search_filter_keyword_upname", null).orEmpty()
         }
+        val searchRemoveRelatePromote = sPrefs.getBoolean("search_filter_remove_relate_promote", false)
         val commentFilterAtUid = run {
             sPrefs.getStringSet("comment_filter_keyword_at_uid", null)
                 ?.mapNotNull { it.toLongOrNull() }.orEmpty()
@@ -84,7 +85,10 @@ class ProtoBufHook(classLoader: ClassLoader) : BaseHook(classLoader) {
             }
         }
 
-        instance.viewMossClass?.hookAfterMethod("view", instance.viewReqClass) { param ->
+        instance.viewMossClass?.hookAfterMethod(
+            if (instance.useNewMossFunc) "executeView" else "view",
+            instance.viewReqClass
+        ) { param ->
             param.result ?: return@hookAfterMethod
             val aid = param.result.callMethod("getArc")
                 ?.callMethodAs("getAid") ?: -1L
@@ -120,13 +124,13 @@ class ProtoBufHook(classLoader: ClassLoader) : BaseHook(classLoader) {
 
         if (hidden && removeCmdDms) {
             instance.viewMossClass?.hookAfterMethod(
-                "viewProgress",
+                if (instance.useNewMossFunc) "executeViewProgress" else "viewProgress",
                 "com.bapis.bilibili.app.view.v1.ViewProgressReq"
             ) { param ->
                 param.result?.callMethod("setVideoGuide", videoGuideClass?.new())
             }
             instance.viewUniteMossClass?.hookAfterMethod(
-                "viewProgress",
+                if (instance.useNewMossFunc) "executeViewProgress" else "viewProgress",
                 "com.bapis.bilibili.app.viewunite.v1.ViewProgressReq"
             ) { param ->
                 param.result?.run {
@@ -135,16 +139,18 @@ class ProtoBufHook(classLoader: ClassLoader) : BaseHook(classLoader) {
                 }
             }
             instance.viewMossClass?.replaceMethod(
-                "tFInfo", "com.bapis.bilibili.app.view.v1.TFInfoReq"
+                if (instance.useNewMossFunc) "executeTFInfo" else "tFInfo",
+                "com.bapis.bilibili.app.view.v1.TFInfoReq"
             ) { null }
             instance.dmMossClass?.hookAfterMethod(
-                "dmView", instance.dmViewReqClass,
+                if (instance.useNewMossFunc) "executeDmView" else "dmView",
+                instance.dmViewReqClass,
             ) { it.result?.removeCmdDms() }
         }
         if (hidden && purifySearch) {
             "com.bapis.bilibili.app.interfaces.v1.SearchMoss".hookAfterMethod(
                 mClassLoader,
-                "defaultWords",
+                if (instance.useNewMossFunc) "executeDefaultWords" else "defaultWords",
                 "com.bapis.bilibili.app.interfaces.v1.DefaultWordsReq"
             ) { param ->
                 param.result = null
@@ -171,7 +177,7 @@ class ProtoBufHook(classLoader: ClassLoader) : BaseHook(classLoader) {
         if (hidden && blockModules) {
             "com.bapis.bilibili.app.resource.v1.ModuleMoss".hookAfterMethod(
                 mClassLoader,
-                "list",
+                if (instance.useNewMossFunc) "executeList" else "list",
                 "com.bapis.bilibili.app.resource.v1.ListReq"
             ) {
                 it.result?.callMethod("clearPools")
@@ -201,9 +207,8 @@ class ProtoBufHook(classLoader: ClassLoader) : BaseHook(classLoader) {
         if (blockCommentGuide || (hidden && blockVideoComment)) {
             "com.bapis.bilibili.main.community.reply.v1.ReplyMoss".hookBeforeMethod(
                 mClassLoader,
-                "mainList",
+                if (instance.useNewMossFunc) "executeMainList" else "mainList",
                 "com.bapis.bilibili.main.community.reply.v1.MainListReq",
-                instance.mossResponseHandlerClass
             ) { param ->
                 val type = param.args[0].callMethodAs<Long>("getType")
                 if (hidden && blockVideoComment && type == 1L) {
@@ -229,37 +234,33 @@ class ProtoBufHook(classLoader: ClassLoader) : BaseHook(classLoader) {
                             emptyPage?.callMethod("addTexts", it)
                         }
                     }
-                    param.args[1].callMethod("onNext", reply)
-                    param.result = null
+                    param.result = reply
                     return@hookBeforeMethod
                 }
                 if (!blockCommentGuide) return@hookBeforeMethod
-                param.args[1] = param.args[1].mossResponseHandlerProxy { reply ->
-                    reply?.runCatchingOrNull {
-                        callMethod("getSubjectControl")?.run {
-                            callMethod("clearEmptyBackgroundTextPlain")
-                            callMethod("clearEmptyBackgroundTextHighlight")
-                            callMethod("clearEmptyBackgroundUri")
-                            callMethod("getEmptyPage")?.let { page ->
-                                page.callMethod("clearLeftButton")
-                                page.callMethod("clearRightButton")
-                                page.callMethodAs<List<Any>>("getTextsList").takeIf { it.size > 1 }
-                                    ?.let {
-                                        page.callMethod("clearTexts")
-                                        page.callMethod("addTexts", it.first().apply {
-                                            callMethod("setRaw", "还没有评论哦")
-                                        })
-                                    }
-                            }
+                param.result.runCatchingOrNull {
+                    callMethod("getSubjectControl")?.run {
+                        callMethod("clearEmptyBackgroundTextPlain")
+                        callMethod("clearEmptyBackgroundTextHighlight")
+                        callMethod("clearEmptyBackgroundUri")
+                        callMethod("getEmptyPage")?.let { page ->
+                            page.callMethod("clearLeftButton")
+                            page.callMethod("clearRightButton")
+                            page.callMethodAs<List<Any>>("getTextsList").takeIf { it.size > 1 }
+                                ?.let {
+                                    page.callMethod("clearTexts")
+                                    page.callMethod("addTexts", it.first().apply {
+                                        callMethod("setRaw", "还没有评论哦")
+                                    })
+                                }
                         }
                     }
                 }
             }
             "com.bapis.bilibili.main.community.reply.v2.ReplyMoss".from(mClassLoader)
                 ?.hookBeforeMethod(
-                    "subjectDescription",
-                    "com.bapis.bilibili.main.community.reply.v2.SubjectDescriptionReq",
-                    instance.mossResponseHandlerClass
+                    if (instance.useNewMossFunc) "executeSubjectDescription" else "subjectDescription",
+                    "com.bapis.bilibili.main.community.reply.v2.SubjectDescriptionReq"
                 ) { param ->
                     val defaultText = textV2Class?.new()?.apply {
                         val tipStr = if (hidden && blockVideoComment) {
@@ -276,33 +277,37 @@ class ProtoBufHook(classLoader: ClassLoader) : BaseHook(classLoader) {
                             callMethod("setStyle", it)
                         }
                     } ?: return@hookBeforeMethod
-                    param.args[1] = param.args[1].mossResponseHandlerProxy { reply ->
-                        reply?.runCatchingOrNull {
-                            callMethod("getEmptyPage")?.run {
-                                callMethod("clearLeftButton")
-                                callMethod("clearRightButton")
-                                callMethod("ensureTextsIsMutable")
-                                callMethodAs<MutableList<Any>>("getTextsList").run {
-                                    clear()
-                                    add(defaultText)
-                                }
-                                if (!(hidden && blockVideoComment)) return@run
-                                callMethod(
-                                    "setImageUrl",
-                                    "https://i0.hdslb.com/bfs/app-res/android/img_holder_forbid_style1.webp"
-                                )
+                    param.result.runCatchingOrNull {
+                        callMethod("getEmptyPage")?.run {
+                            callMethod("clearLeftButton")
+                            callMethod("clearRightButton")
+                            callMethod("ensureTextsIsMutable")
+                            callMethodAs<MutableList<Any>>("getTextsList").run {
+                                clear()
+                                add(defaultText)
                             }
+                            if (!(hidden && blockVideoComment)) return@run
+                            callMethod(
+                                "setImageUrl",
+                                "https://i0.hdslb.com/bfs/app-res/android/img_holder_forbid_style1.webp"
+                            )
                         }
                     }
                 }
         }
-        val needSearchFilter = hidden and (searchFilterContents.isNotEmpty() or searchFilterUid.isNotEmpty() or searchFilterUpNames.isNotEmpty())
+        val needSearchFilter = hidden and (searchFilterContents.isNotEmpty() or searchFilterUid.isNotEmpty() or searchFilterUpNames.isNotEmpty()) or searchRemoveRelatePromote
         if (needSearchFilter) {
             instance.searchAllResponseClass?.hookAfterMethod("getItemList") { p ->
                 val items = p.result as? List<Any?> ?: return@hookAfterMethod
                 p.result = items.filter { item ->
                     val videoCard = item?.getObjectField("cardItem_") ?: return@filter true
-                    if (instance.searchVideoCardClass?.isInstance(videoCard) == false) return@filter true
+                    if (instance.searchVideoCardClass?.isInstance(videoCard) == false) {
+                        if (searchRemoveRelatePromote) {
+                            if (item.callMethodAs<Boolean>("hasCm")) return@filter false
+                            if (item.callMethodAs<Boolean>("hasSpecial")) return@filter false
+                        }
+                        return@filter true
+                    }
                     if (videoCard.getLongField("mid_") in searchFilterUid) return@filter false
                     if (videoCard.getObjectFieldAs<String>("author_") in searchFilterUpNames) return@filter false
                     if (searchFilterContentRegexMode) {
@@ -377,7 +382,8 @@ class ProtoBufHook(classLoader: ClassLoader) : BaseHook(classLoader) {
         }
 
         instance.viewUniteMossClass?.hookAfterMethod(
-            "view", instance.viewUniteReqClass
+            if (instance.useNewMossFunc) "executeView" else "view",
+            instance.viewUniteReqClass
         ) { param ->
             if (instance.networkExceptionClass?.isInstance(param.throwable) == true) return@hookAfterMethod
             param.result ?: return@hookAfterMethod

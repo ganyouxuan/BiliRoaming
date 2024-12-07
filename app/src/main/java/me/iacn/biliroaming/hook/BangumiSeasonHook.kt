@@ -321,7 +321,10 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
             }
         }
 
-        instance.viewMossClass?.hookAfterMethod("view", instance.viewReqClass) { param ->
+        instance.viewMossClass?.hookAfterMethod(
+            if (instance.useNewMossFunc) "executeView" else "view",
+            instance.viewReqClass
+        ) { param ->
             param.result?.let { return@hookAfterMethod }
             val serializedRequest = param.args[0].callMethodAs<ByteArray>("toByteArray")
             val req = ViewReq.parseFrom(serializedRequest)
@@ -332,7 +335,8 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
         }
 
         instance.viewUniteMossClass?.hookAfterMethod(
-            "view", "com.bapis.bilibili.app.viewunite.v1.ViewReq"
+            if (instance.useNewMossFunc) "executeView" else "view",
+            "com.bapis.bilibili.app.viewunite.v1.ViewReq"
         ) { param ->
             if (instance.networkExceptionClass?.isInstance(param.throwable) == true) return@hookAfterMethod
             val response = param.result
@@ -456,6 +460,10 @@ class BangumiSeasonHook(classLoader: ClassLoader) : BaseHook(classLoader) {
         val navList = v.callMethodAs<List<Any>>("getNavList")
             .map { SearchNav.parseFrom(it.callMethodAs<ByteArray>("toByteArray")) }
             .toMutableList()
+        // fix crash when searching sensitive words
+        if (navList.size == 0) {
+            return
+        }
         val currentArea = runCatchingOrNull {
             XposedInit.country.get(5L, TimeUnit.SECONDS)
         }

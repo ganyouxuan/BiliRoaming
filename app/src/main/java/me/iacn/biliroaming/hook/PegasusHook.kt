@@ -115,6 +115,10 @@ class PegasusHook(classLoader: ClassLoader) : BaseHook(classLoader) {
             else it < hideLowPlayCountLimit
         }
     }
+    private fun isLowCountVideoUnite(count: Long): Boolean {
+        if (hideLowPlayCountLimit == 0L) return false
+        return count < hideLowPlayCountLimit
+    }
 
     // 屏蔽指定播放时长
     private fun durationVideo(obj: Any): Boolean {
@@ -122,6 +126,13 @@ class PegasusHook(classLoader: ClassLoader) : BaseHook(classLoader) {
             return false
         val duration = obj.getObjectField("playerArgs")
             ?.getObjectFieldAs("fakeDuration") ?: 0
+        if (hideLongDurationLimit != 0 && duration > hideLongDurationLimit)
+            return true
+        return hideShortDurationLimit != 0 && duration < hideShortDurationLimit
+    }
+    private fun durationVideoUnite(duration: Long): Boolean {
+        if (hideLongDurationLimit == 0 && hideShortDurationLimit == 0)
+            return false
         if (hideLongDurationLimit != 0 && duration > hideLongDurationLimit)
             return true
         return hideShortDurationLimit != 0 && duration < hideShortDurationLimit
@@ -193,6 +204,46 @@ class PegasusHook(classLoader: ClassLoader) : BaseHook(classLoader) {
             }
         }
 
+        return false
+    }
+
+    private fun isContainsBlockKwdUnite(card: Any): Boolean {
+        if (card.callMethodAs("hasBasicInfo")) {
+            card.callMethodAs<Any>("getBasicInfo").let { basicInfo ->
+                // 屏蔽标题关键词
+                if (kwdFilterTitleList.isNotEmpty()) {
+                    val title = basicInfo.callMethodAs<String>("getTitle")
+                    if (kwdFilterTitleRegexMode && title.isNotEmpty()) {
+                        if (kwdFilterTitleRegexes.any { title.contains(it) })
+                            return true
+                    } else if (title.isNotEmpty()) {
+                        if (kwdFilterTitleList.any { title.contains(it) })
+                            return true
+                    }
+                }
+
+                basicInfo.callMethodAs<Any>("getAuthor").let { author ->
+                    // 屏蔽UID
+                    if (kwdFilterUidList.isNotEmpty()) {
+                        val uid = author.callMethodAs<Long>("getMid")
+                        if (uid != 0L && kwdFilterUidList.any { it == uid })
+                            return true
+                    }
+
+                    // 屏蔽UP主
+                    if (kwdFilterUpnameList.isNotEmpty()) {
+                        val upName = author.callMethodAs<String>("getTitle")
+                        if (kwdFilterUpnameRegexMode && upName.isNotEmpty()) {
+                            if (kwdFilterUpnameRegexes.any { upName.contains(it) })
+                                return true
+                        } else if (upName.isNotEmpty()) {
+                            if (kwdFilterUpnameList.any { upName.contains(it) })
+                                return true
+                        }
+                    }
+                }
+            }
+        }
         return false
     }
 
@@ -486,6 +537,7 @@ class PegasusHook(classLoader: ClassLoader) : BaseHook(classLoader) {
 
         fun MutableList<Any>.filterUnite() = removeAll {
             val allowTypeList = mutableListOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+            var shouldFiltered = false
             allowTypeList.removeAll { digit ->
                 (removeRelateOnlyAv && digit != 1) || (removeRelatePromote && digit in listOf(
                     3, // Resource, like mall
@@ -494,9 +546,41 @@ class PegasusHook(classLoader: ClassLoader) : BaseHook(classLoader) {
                     10 // SPECIAL
                 ))
             }
-            removeRelateNothing || it.callMethodAs("getRelateCardTypeValue") !in allowTypeList
+            // av filter
+            if (applyToRelate) {
+                if (it.callMethodAs("hasAv")) {
+                    it.callMethodAs<Any>("getAv").let { av ->
+                        val duration = av.callMethodAs<Long>("getDuration")
+                        if (durationVideoUnite(duration)) {
+                            shouldFiltered = true
+                            return@let
+                        }
+                        if (av.callMethodAs("hasStat")) {
+                            av.callMethodAs<Any>("getStat").let { stat ->
+                                if (stat.callMethodAs("hasVt")) {
+                                    stat.callMethodAs<Any>("getVt").let { vt ->
+                                        if (isLowCountVideoUnite(vt.callMethodAs<Long>("getValue"))) {
+                                            shouldFiltered = true
+                                            return@let
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (isContainsBlockKwdUnite(it)) {
+                        shouldFiltered = true
+                    }
+                }
+                // todo: support rcmd
+            }
+            removeRelateNothing || it.callMethodAs("getRelateCardTypeValue") !in allowTypeList || shouldFiltered
         }
-        instance.viewMossClass?.hookAfterMethod("view", instance.viewReqClass) { param ->
+
+        instance.viewMossClass?.hookAfterMethod(
+            if (instance.useNewMossFunc) "executeView" else "view",
+            instance.viewReqClass
+        ) { param ->
             param.result ?: return@hookAfterMethod
             if (removeRelatePromote && removeRelateOnlyAv && removeRelateNothing) {
                 param.result.callMethod("clearRelates")
@@ -507,15 +591,19 @@ class PegasusHook(classLoader: ClassLoader) : BaseHook(classLoader) {
             param.result.callMethodAs<MutableList<Any>>("getRelatesList").filter()
         }
         instance.viewMossClass?.hookAfterMethod(
-            "relatesFeed",
+            if (instance.useNewMossFunc) "executeRelatesFeed" else "relatesFeed",
             "com.bapis.bilibili.app.view.v1.RelatesFeedReq"
         ) { param ->
             param.result ?: return@hookAfterMethod
             param.result.callMethod("ensureListIsMutable")
             param.result.callMethodAs<MutableList<Any>>("getListList").filter()
         }
+
         instance.viewUniteMossClass?.run {
-            hookAfterMethod("view", instance.viewUniteReqClass) { param ->
+            hookAfterMethod(
+                if (instance.useNewMossFunc) "executeView" else "view",
+                instance.viewUniteReqClass
+            ) { param ->
                 param.result ?: return@hookAfterMethod
                 param.result.callMethod("getTab")?.run {
                     callMethod("ensureTabModuleIsMutable")
@@ -535,7 +623,7 @@ class PegasusHook(classLoader: ClassLoader) : BaseHook(classLoader) {
                 }
             }
             hookAfterMethod(
-                "relatesFeed",
+                if (instance.useNewMossFunc) "executeRelatesFeed" else "relatesFeed",
                 "com.bapis.bilibili.app.viewunite.v1.RelatesFeedReq"
             ) { param ->
                 param.result?.run {
@@ -588,6 +676,8 @@ class PegasusHook(classLoader: ClassLoader) : BaseHook(classLoader) {
                 param.result = null
             }
 
+
+
         fun MutableList<Any>.filterPopular() = removeIf {
             when (it.callMethod("getItemCase")?.toString()) {
                 "SMALL_COVER_V5" -> {
@@ -610,7 +700,7 @@ class PegasusHook(classLoader: ClassLoader) : BaseHook(classLoader) {
         }
 
         instance.popularClass?.hookBeforeMethod(
-            "index",
+            if (instance.useNewMossFunc) "executeIndex" else "index",
             "com.bapis.bilibili.app.show.popular.v1.PopularResultReq"
         ) { param ->
             param.args ?: return@hookBeforeMethod
@@ -625,9 +715,8 @@ class PegasusHook(classLoader: ClassLoader) : BaseHook(classLoader) {
             param.args[0].setObjectField("lastParam_", popularDataVersion)
             param.args[0].setLongField("idx_", popularDataCount)
         }
-
         instance.popularClass?.hookAfterMethod(
-            "index",
+            if (instance.useNewMossFunc) "executeIndex" else "index",
             "com.bapis.bilibili.app.show.popular.v1.PopularResultReq"
         ) { param ->
             param.result ?: return@hookAfterMethod
